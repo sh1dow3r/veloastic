@@ -1,0 +1,12 @@
+[elasticsearch]
+host = cloud.elastic.come
+port = 443
+scheme = https
+username = myusername
+password = mypassword
+
+[cases]
+myindex01 = /Users/x/Documents/Collections/c01
+myindex02 = /Users/x/Documents/Collections/c02
+
+# Add more cases if needed
