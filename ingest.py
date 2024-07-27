@@ -23,8 +23,9 @@ def load_config(config_path):
 
 # Parse command-line arguments
 def parse_arguments():
-    parser = argparse.ArgumentParser(description='Process ZIP files and upload JSON data to Elasticsearch.')
-    parser.add_argument('--config', required=True, help='Path to the configuration file.')
+    parser = argparse.ArgumentParser(description='Process ZIP files and perform operations on JSON data.')
+    parser.add_argument('--config', default='config.ini', help='Path to the configuration file. Default is "config.ini".')
+    parser.add_argument('-o', '--operation', choices=['ingest', 'enrich_download', 'enrich_upload'], default='ingest', help='Operation to perform: ingest (default), enrich_download, enrich_upload.')
     return parser.parse_args()
 
 # Configure Elasticsearch client
@@ -49,144 +50,140 @@ def create_index(es, index_name):
 
 # Upload JSON data to Elasticsearch in bulk
 def bulk_upload_json_to_elasticsearch(es, index_name, json_data_list):
-    actions = []
-    for doc in json_data_list:
-        actions.append({
-            "index": {
-                "_index": index_name,
-                "_id": doc.get('UUID')
-            }
-        })
-        actions.append(doc)
-    
+    actions = [
+        {
+            "_index": index_name,
+            "_source": json_data,
+        }
+        for json_data in json_data_list
+    ]
     try:
-        if actions:
-            es.bulk(body=actions, refresh=True, timeout='60s')  # Increase timeout for bulk operation
-            logging.info(f"Indexed {len(json_data_list)} documents to {index_name}")
-    except exceptions.RequestError as e:
-        logging.error(Fore.RED + f"RequestError indexing documents in {index_name}: {e.info}")
-    except exceptions.ConnectionTimeout as e:
-        logging.error(Fore.RED + f"ConnectionTimeout indexing documents in {index_name}: {e.info}")
+        from elasticsearch.helpers import bulk
+        bulk(es, actions)
+    except exceptions.BulkIndexError as e:
+        logging.error(Fore.RED + f"Bulk indexing error: {e}")
+
+# Process a JSON file
+def process_json_file(es, json_file_path, index_name, processed_records):
+    try:
+        with open(json_file_path, 'r') as json_file:
+            json_data_list = []
+            for line in json_file:
+                json_data = json.loads(line)
+                json_data_list.append(json_data)
+            bulk_upload_json_to_elasticsearch(es, index_name, json_data_list)
+            logging.info(Fore.GREEN + f"Successfully processed {json_file_path}")
+    except json.JSONDecodeError as e:
+        logging.error(Fore.RED + f"Error decoding JSON from file {json_file_path}: {e}")
     except Exception as e:
-        logging.error(Fore.RED + f"Error indexing documents in {index_name}: {e}")
+        logging.error(Fore.RED + f"Error processing file {json_file_path}: {e}")
 
-# Calculate SHA-1 checksum of a file
-def calculate_checksum(file_path):
-    hash_sha1 = hashlib.sha1()
-    with open(file_path, "rb") as f:
-        for chunk in iter(lambda: f.read(4096), b""):
-            hash_sha1.update(chunk)
-    return hash_sha1.hexdigest()
+# Save processed file's checksum to avoid reprocessing
+def save_processed_file(hash_file_path, file_checksum):
+    with open(hash_file_path, 'a') as hash_file:
+        hash_file.write(file_checksum + '\n')
 
-# Load processed file hashes from a file
-def load_processed_files(file_path):
-    if os.path.exists(file_path):
-        with open(file_path, 'r') as file:
-            return set(file.read().splitlines())
+# Load processed files to avoid reprocessing
+def load_processed_files(hash_file_path):
+    if os.path.exists(hash_file_path):
+        with open(hash_file_path, 'r') as hash_file:
+            return set(line.strip() for line in hash_file)
     return set()
 
-# Save a processed file hash to a file
-def save_processed_file(file_path, file_hash):
-    with open(file_path, 'a') as file:
-        file.write(file_hash + '\n')
+# Calculate the checksum of a file
+def calculate_file_checksum(file_path):
+    sha256_hash = hashlib.sha256()
+    with open(file_path, 'rb') as file:
+        for byte_block in iter(lambda: file.read(4096), b""):
+            sha256_hash.update(byte_block)
+    return sha256_hash.hexdigest()
 
-# Process a JSON file and upload its data to Elasticsearch
-def process_json_file(es, json_file_path, index_name, processed_records):
-    if os.path.getsize(json_file_path) == 0:
-        logging.warning(Fore.YELLOW + f"Skipping empty file: {json_file_path}")
-        return
-
-    sourcetype = json_file_path.stem
-
-    documents = []
-    with open(json_file_path, 'r', encoding='utf-8') as f:
-        for line in f:
-            try:
-                json_data = json.loads(line)
-                json_data['sourcetype'] = sourcetype
-                
-                # Convert System.Keywords to string if it exists
-                if 'System' in json_data and 'Keywords' in json_data['System']:
-                    json_data['System']['Keywords'] = str(json_data['System']['Keywords'])
-                
-                # Use the UUID field as the document ID
-                doc_id = json_data.get('UUID')
-                if doc_id and doc_id not in processed_records:
-                    documents.append(json_data)
-                    processed_records.add(doc_id)
-                elif not doc_id:
-                    logging.warning(Fore.YELLOW + f"Document missing UUID in file {json_file_path}, skipping.")
-            except json.JSONDecodeError as e:
-                logging.error(Fore.RED + f"Error decoding JSON in file {json_file_path}, line: {line[:50]}...: {e}")
-                continue
-
-    if documents:
-        bulk_upload_json_to_elasticsearch(es, index_name, documents)
-
-# Process a ZIP file and extract JSON data
-def process_zip_file(es, zip_file_path, case_id, hash_file_path, processed_files, processed_records):
+# Extract and rename ZIP files
+def extract_and_rename_zip(zip_file_path, destination_dir):
     try:
-        file_checksum = calculate_checksum(zip_file_path)
-    
-        if file_checksum in processed_files:
-            logging.info(Fore.YELLOW + f"Skipping duplicate file: {zip_file_path}")
-            return
-        
-        processed_files.add(file_checksum)
-
-        if not zipfile.is_zipfile(zip_file_path):
-            logging.info(Fore.YELLOW + f"Skipping non-ZIP file: {zip_file_path}")
-            return
-
         with zipfile.ZipFile(zip_file_path, 'r') as zip_ref:
-            temp_dir = Path(zip_file_path).with_suffix('')
+            temp_dir = Path(destination_dir) / zip_file_path.stem
+            temp_dir.mkdir(parents=True, exist_ok=True)
             zip_ref.extractall(temp_dir)
-            
-            json_dir = temp_dir             
-            if not json_dir.exists():
-                logging.info(Fore.RED + f"Directory {json_dir} not found in {zip_file_path}. Skipping.")
-                return
-            
-            index_name = case_id.lower()
-            create_index(es, index_name)
 
-            for json_file in json_dir.glob('*.json'):
-                process_json_file(es, json_file, index_name, processed_records)
+            for item in temp_dir.iterdir():
+                if item.is_dir():
+                    new_dir_name = temp_dir
+                    counter = 1
+                    while new_dir_name.exists():
+                        new_dir_name = temp_dir.parent / f"{temp_dir.stem}_{counter}"
+                        counter += 1
+                    item.rename(new_dir_name)
+                    logging.info(Fore.GREEN + f"Extracted and renamed to {new_dir_name}")
+                    break
 
-        save_processed_file(hash_file_path, file_checksum)
     except Exception as e:
         logging.error(Fore.RED + f"Error processing file {zip_file_path}: {e}")
 
-def main():
-    args = parse_arguments()
-    config = load_config(args.config)
-    
-    es = configure_es(config)
+# Process directories to find and extract ZIP files
+def process_directories(folder, destination_dir):
+    for path in folder.iterdir():
+        if path.is_dir():
+            process_directories(path, destination_dir)
+        elif path.is_file() and path.suffix == '.zip':
+            extract_and_rename_zip(path, destination_dir)
+
+# Dummy function for enrich_download
+def enrich_download():
+    logging.info("Enrich download operation - to be implemented.")
+
+# Dummy function for enrich_upload
+def enrich_upload():
+    logging.info("Enrich upload operation - to be implemented.")
+
+def ingest(config):
     case_dirs = config.items('cases')
+
+    es = configure_es(config)
     
     for case_id, folder_path in case_dirs:
         if case_id.startswith(';') or case_id.startswith('#'):
             continue
 
-        hash_file_path = f"{folder_path}/processed_files_{case_id}.txt"
-        processed_files = load_processed_files(hash_file_path)
-        processed_records = set()
-
         folder = Path(folder_path)
-        
-        for subdir in folder.iterdir():
-            if subdir.is_dir() and subdir.name.lower() != 'thoroutput':
-                zip_files = subdir.glob('*.zip')
-                
-                with concurrent.futures.ThreadPoolExecutor() as executor:
-                    futures = [
-                        executor.submit(process_zip_file, es, zip_file, case_id, hash_file_path, processed_files, processed_records)
-                        for zip_file in zip_files
-                    ]
-                    
-                    for future in tqdm(concurrent.futures.as_completed(futures), total=len(futures), desc=f"Processing {subdir.name}"):
-                        future.result()
+        if not folder.exists():
+            logging.warning(Fore.YELLOW + f"Folder {folder_path} does not exist. Skipping.")
+            continue
+
+        destination_dir = folder / 'ready_to_ingest'
+        destination_dir.mkdir(exist_ok=True)
+
+        process_directories(folder, destination_dir)
+
+        ready_dirs = destination_dir.iterdir()
+
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            futures = []
+            for ready_dir in ready_dirs:
+                hash_file_path = ready_dir / f"processed_files_{ready_dir.name}.txt"
+                processed_files = load_processed_files(hash_file_path)
+                processed_records = set()
+
+                for root, dirs, files in os.walk(ready_dir):
+                    for file in files:
+                        if file.endswith('.json'):
+                            json_file_path = Path(root) / file
+                            create_index(es, case_id)
+                            futures.append(executor.submit(process_json_file, es, json_file_path, case_id, processed_records))
+
+            for future in tqdm(concurrent.futures.as_completed(futures), total=len(futures), desc="Ingesting JSON files"):
+                future.result()
+
+def main():
+    args = parse_arguments()
+    config = load_config(args.config)
+
+    if args.operation == 'ingest':
+        ingest(config)
+    elif args.operation == 'enrich_download':
+        enrich_download()
+    elif args.operation == 'enrich_upload':
+        enrich_upload()
 
 if __name__ == "__main__":
     main()
-
