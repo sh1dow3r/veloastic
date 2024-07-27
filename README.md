@@ -9,6 +9,7 @@ This repository contains a Python script for ingesting JSON data from ZIP files 
 - Duplicate record prevention
 - Configuration via `.ini` file
 - Comprehensive logging and error handling
+- Supports multiple operations (ingest, enrich_download, enrich_upload)
 
 ## Configuration
 
@@ -53,11 +54,18 @@ Run the script:
 ```bash
 python ingest.py --config path/to/your/config.ini
 ```
+OR 
+
+Specify an operation (ingest, enrich_download, or enrich_upload):
+
+```bash
+python ingest.py --config path/to/your/config.ini --operation <operation>
+```
 
 ## Directory Structure
 
 ```
-elasticsearch-json-ingestion/
+veloastic-main/
 │
 ├── ingest.py
 ├── config.ini
@@ -67,7 +75,8 @@ elasticsearch-json-ingestion/
 
 ## Logging
 
-The script logs its activity, including errors and warnings.
+The script logs its activity per JSON file, including errors and warnings.
+
 
 ## Contributing
 
