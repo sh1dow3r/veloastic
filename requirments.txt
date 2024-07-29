@@ -1,3 +1,7 @@
+requests
 colorama
 tqdm
+ijson
+backoff
+jsonschema
 elasticsearch==7.17.3

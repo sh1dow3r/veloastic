@@ -1,3 +1,6 @@
+[logging]
+level = INFO
+
 [elasticsearch]
 host = cloud.elastic.come
 port = 443

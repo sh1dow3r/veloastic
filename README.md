@@ -1,5 +1,5 @@
 
-# Elasticsearch JSON Ingestion Script
+# Veloastic 
 
 This repository contains a Python script for ingesting JSON data from ZIP files into Elasticsearch, optimized for bulk upload and duplicate prevention.
 
@@ -16,19 +16,20 @@ This repository contains a Python script for ingesting JSON data from ZIP files 
 Create a `.ini` file with the following structure:
 
 ```ini
-[elasticsearch]
-host = your-elasticsearch-host
-port = 9200
-scheme = https
-username = your-username
-password = your-password
-
-[cases]
-case1 = /path/to/folder1
-case2 = /path/to/folder2
-
 [logging]
 level = INFO
+
+[elasticsearch]
+host = cloud.elastic.come
+port = 443
+scheme = https
+username = myusername
+password = mypassword
+
+[cases]
+myindex01 = /Users/x/Documents/Collections/c01
+myindex02 = /Users/x/Documents/Collections/c02
+
 ```
 
 ## Getting Started
@@ -42,8 +43,8 @@ level = INFO
 ### Installation
 
 ```bash
-git clone https://github.com/yourusername/elasticsearch-json-ingestion.git
-cd elasticsearch-json-ingestion
+git clone https://github.com/sh1dow3r/veloastic/
+cd veloastic
 pip install -r requirements.txt
 ```
 
@@ -52,22 +53,22 @@ pip install -r requirements.txt
 Run the script:
 
 ```bash
-python ingest.py --config path/to/your/config.ini
+python veloastic.py --config path/to/your/config.ini
 ```
 OR 
 
 Specify an operation (ingest, enrich_download, or enrich_upload):
 
 ```bash
-python ingest.py --config path/to/your/config.ini --operation <operation>
+python veloastic.py --config path/to/your/config.ini --operation <operation>
 ```
 
 ## Directory Structure
 
 ```
-veloastic-main/
+veloastic/
 │
-├── ingest.py
+├── veloastic.py
 ├── config.ini
 ├── requirements.txt
 └── README.md
