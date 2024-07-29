@@ -90,3 +90,5 @@ The script logs its activity per JSON file, including errors and warnings.
 ## License
 
 Licensed under the MIT License.
+
+
